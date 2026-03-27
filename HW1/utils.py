@@ -76,16 +76,14 @@ class SeamImage:
             Use NumpyPy vectorized matrix multiplication for high performance.
             To prevent outlier values in the boundaries, we recommend to pad them with 0.5
         """
-        # gs_img = TODO
+        gs_img = np_img @ self.gs_weights
 
         # uncomment for padding (a common pracctive in image processing)
-        # gs_img[0, :] = .5
-        # gs_img[-1, :] = .5
-        # gs_img[:, 0] = .5
-        # gs_img[:, -1] = .5
-        # return gs_img
-
-        raise NotImplementedError("TODO: Implement SeamImage.rgb_to_grayscale")
+        gs_img[0, :] = .5
+        gs_img[-1, :] = .5
+        gs_img[:, 0] = .5
+        gs_img[:, -1] = .5
+        return gs_img
 
     @NI_decor
     def calc_gradient_magnitude(self):
@@ -99,7 +97,15 @@ class SeamImage:
             - keep in mind that values must be in range [0,1]
             - np.gradient or other off-the-shelf tools are NOT allowed, however feel free to compare yourself to them
         """
-        raise NotImplementedError("TODO: Implement SeamImage.calc_gradient_magnitude")
+        #Using offset indices for forward differencing and padding back to the original shape
+        dx = self.gs[:, :-1] - self.gs[:, 1:]
+        dx = np.pad(dx, ((0,0), (0,1), (0,0)), mode='constant')
+        
+        dy = self.gs[:-1, :] - self.gs[1:, :]
+        dy = np.pad(dy, ((0,1), (0,0), (0,0)), mode='constant')
+
+        #Computing magnitude and dividing by the maximal value of sqrt(1^2+1^2)
+        return np.sqrt(dx**2 + dy**2)/np.sqrt(2)
 
 
     def update_ref_mat(self):
@@ -109,7 +115,16 @@ class SeamImage:
             - Given the latest computed seam, you need to track its original indices and mark them (self.cumm_mask) using self.ixd_map
             - Resize self.idx_map each seam update
         """
-        raise NotImplementedError("TODO: Implement SeamImage.calc_gradient_magnitude")
+        seam = self.seam_history[-1]
+        rows = np.arange(self.h)
+        coords = self.idx_map[rows, seam]
+        row_orig = coords[:, 0]
+        col_orig = coords[:, 1]
+        self.cumm_mask[row_orig, col_orig] = True
+
+        mask = np.ones((self.h, self.w), dtype=bool)
+        mask[rows, seam] = False
+        self.idx_map = self.idx_map[mask].reshape(self.h, self.w - 1, 2)
 
     def reinit(self):
         """
@@ -173,6 +188,13 @@ class SeamImage:
 
         :arg seam: The seam to remove
         """
+        rows = np.arange(self.h)
+        mask_1d = np.ones((self.h, self.w), dtype=bool)
+        mask_1d[rows, seam] = False
+        mask_3d = np.stack([mask_1d] * 3, axis=2)
+        self.w -= 1
+        self.resized_rgb = self.resized_rgb[mask_3d].reshape(self.h, self.w, 3)
+
         raise NotImplementedError("TODO: Implement SeamImage.remove_seam")
 
     @NI_decor
@@ -263,7 +285,19 @@ class GreedySeamImage(SeamImage):
         The first pixel of the seam should be the pixel with the lowest cost.
         Every row chooses the next pixel based on which neighbor has the lowest cost.
         """
-        raise NotImplementedError("TODO: Implement GreedySeamImage.find_minimal_seam")
+        width = np.shape(self.E)[1]
+        seam = np.empty(self.h, dtype=int)
+        seam[0] = np.argmin(self.E[0])
+
+        for i in range(1, self.h):
+            prev_index = seam[i - 1]
+            #set up the window for the next row minimum
+            start_win = max(0, prev_index - 1)
+            end_win = min(width, prev_index + 2)
+
+            seam[i] = np.argmin(self.E[i, start_win:end_win]) + start_win
+        
+        return seam
 
 
 class DPSeamImage(SeamImage):
