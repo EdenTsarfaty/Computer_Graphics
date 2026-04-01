@@ -127,9 +127,8 @@ class SeamImage:
         self.seams_rgb[row_orig, col_orig] = (1.0, 0, 0)
 
         #Removing the seam from self.idx_map using mask
-        mask = np.ones((self.h, self.w), dtype=bool)
-        mask[rows, seam] = False
-        self.idx_map = self.idx_map[mask].reshape(self.h, self.w - 1, 2)
+        self.mask[rows, seam] = False
+        self.idx_map = self.idx_map[self.mask].reshape(self.h, self.w - 1, 2)
 
     def reinit(self):
         """
@@ -195,14 +194,14 @@ class SeamImage:
         """
         #Setting up a 3d mask and 1d mask for rgb and grayscale images
         rows = np.arange(self.h)
-        mask_1d = np.ones((self.h, self.w), dtype=bool)
-        mask_1d[rows, seam] = False
-        mask_3d = np.stack([mask_1d] * 3, axis=2)
+        # mask_1d = np.ones((self.h, self.w), dtype=bool)
+        self.mask[rows, seam] = False
+        mask_3d = np.stack([self.mask] * 3, axis=2)
         self.w -= 1
 
         #Update RGB and GS for the next round of seam removal
         self.resized_rgb = self.resized_rgb[mask_3d].reshape(self.h, self.w, 3)
-        self.resized_gs = self.resized_gs[mask_1d].reshape(self.h, self.w, 1)
+        self.resized_gs = self.resized_gs[self.mask].reshape(self.h, self.w, 1)
 
     @NI_decor
     def rotate_mats(self, clockwise: bool):
@@ -299,16 +298,10 @@ class GreedySeamImage(SeamImage):
         The first pixel of the seam should be the pixel with the lowest cost.
         Every row chooses the next pixel based on which neighbor has the lowest cost.
         """
-        
+        #Selecting starting point on top_row based on energy + forward cost looking with 1 new edge
         seam = np.empty(self.h, dtype=int)
-
+        
         self.resized_gs = np.squeeze(self.resized_gs)
-
-        # for pixel in range (self.w):
-        #     pixel_l = self.resized_gs[1, max(pixel - 1, 0)]
-        #     pixel_r = self.resized_gs[1, min(pixel + 1, self.w - 1)]
-        #     print(f"{top_row[pixel]} + |{pixel_r} - {pixel_l}| = {abs(pixel_r - pixel_l)}")
-        #     top_row[pixel] += abs(pixel_r - pixel_l)
 
         left_pixels = np.pad(self.resized_gs[0, :-1], (1,0), mode='edge')
         right_pixels = np.pad(self.resized_gs[0, 1:], (0,1), mode='edge')
@@ -316,7 +309,7 @@ class GreedySeamImage(SeamImage):
 
         seam[0] = np.argmin(top_row)
 
-
+        #For each row, considering energy + forward cost looking + handle edges
         for row in range(1, self.h):
             prev_index = seam[row - 1]
             window = range(max(0, prev_index - 1), min(self.w, prev_index + 2))
