@@ -79,10 +79,10 @@ class SeamImage:
         gs_img = np_img @ self.gs_weights
 
         # uncomment for padding (a common pracctive in image processing)
-        gs_img[0, :] = .5
-        gs_img[-1, :] = .5
-        gs_img[:, 0] = .5
-        gs_img[:, -1] = .5
+        # gs_img[0, :] = .5
+        # gs_img[-1, :] = .5
+        # gs_img[:, 0] = .5
+        # gs_img[:, -1] = .5
         return gs_img
 
     @NI_decor
@@ -98,14 +98,14 @@ class SeamImage:
             - np.gradient or other off-the-shelf tools are NOT allowed, however feel free to compare yourself to them
         """
         #Using offset indices for forward differencing and padding back to the original shape
-        dx = self.gs[:, :-1] - self.gs[:, 1:]
+        dx = self.resized_gs[:, :-1] - self.resized_gs[:, 1:]
         dx = np.pad(dx, ((0,0), (0,1), (0,0)), mode='constant')
         
-        dy = self.gs[:-1, :] - self.gs[1:, :]
+        dy = self.resized_gs[:-1, :] - self.resized_gs[1:, :]
         dy = np.pad(dy, ((0,1), (0,0), (0,0)), mode='constant')
 
-        #Computing magnitude and dividing by the maximal value of sqrt(1^2+1^2)
-        return np.sqrt(dx**2 + dy**2)/np.sqrt(2)
+        #Computing magnitude and dividing by the maximal value of sqrt(1^2+1^2) to get range [0,1]
+        return np.squeeze(np.sqrt(dx**2 + dy**2)/np.sqrt(2), axis=2)
 
 
     def update_ref_mat(self):
@@ -115,6 +115,7 @@ class SeamImage:
             - Given the latest computed seam, you need to track its original indices and mark them (self.cumm_mask) using self.ixd_map
             - Resize self.idx_map each seam update
         """
+        #Setting each cell of the seam True in self.cumm_mask
         seam = self.seam_history[-1]
         rows = np.arange(self.h)
         coords = self.idx_map[rows, seam]
@@ -122,6 +123,10 @@ class SeamImage:
         col_orig = coords[:, 1]
         self.cumm_mask[row_orig, col_orig] = True
 
+        #Update visualization by red
+        self.seams_rgb[row_orig, col_orig] = (1.0, 0, 0)
+
+        #Removing the seam from self.idx_map using mask
         mask = np.ones((self.h, self.w), dtype=bool)
         mask[rows, seam] = False
         self.idx_map = self.idx_map[mask].reshape(self.h, self.w - 1, 2)
@@ -188,30 +193,37 @@ class SeamImage:
 
         :arg seam: The seam to remove
         """
+        #Setting up a 3d mask and 1d mask for rgb and grayscale images
         rows = np.arange(self.h)
         mask_1d = np.ones((self.h, self.w), dtype=bool)
         mask_1d[rows, seam] = False
         mask_3d = np.stack([mask_1d] * 3, axis=2)
         self.w -= 1
-        self.resized_rgb = self.resized_rgb[mask_3d].reshape(self.h, self.w, 3)
 
-        raise NotImplementedError("TODO: Implement SeamImage.remove_seam")
+        #Update RGB and GS for the next round of seam removal
+        self.resized_rgb = self.resized_rgb[mask_3d].reshape(self.h, self.w, 3)
+        self.resized_gs = self.resized_gs[mask_1d].reshape(self.h, self.w, 1)
 
     @NI_decor
     def rotate_mats(self, clockwise: bool):
         """
         Rotates the matrices either clockwise or counter-clockwise.
         """
-        raise NotImplementedError("TODO: Implement SeamImage.rotate_mats")
+        direction = -1 if clockwise else 1
+        for name in ['rgb', 'resized_rgb', 'gs', 'resized_gs', 'idx_map']:
+            mat = getattr(self, name)
+            setattr(self, name, np.rot90(mat, direction))
+        
+        self.w, self.W, self.h, self.H = self.h, self.H, self.w, self.W
 
     @NI_decor
     def seams_removal_vertical(self, num_remove: int):
         """ A wrapper for removing num_remove horizontal seams (just a recommendation)
 
         Parameters:
-            num_remove (int): umber of vertical seam to be removed
+            num_remove (int): number of vertical seam to be removed
         """
-        raise NotImplementedError("TODO: Implement SeamImage.seams_removal_horizontal")
+        self.seams_removal(num_remove)
 
     @NI_decor
     def seams_removal_horizontal(self, num_remove: int):
@@ -228,7 +240,9 @@ class SeamImage:
                 SOME_OPERATION(...)
             and thats it!
         """
-        raise NotImplementedError("TODO: Implement SeamImage.seams_removal_horizontal")
+        self.rotate_mats(True)
+        self.seams_removal(num_remove)
+        self.rotate_mats(False)
 
     """
     BONUS SECTION
@@ -285,17 +299,50 @@ class GreedySeamImage(SeamImage):
         The first pixel of the seam should be the pixel with the lowest cost.
         Every row chooses the next pixel based on which neighbor has the lowest cost.
         """
-        width = np.shape(self.E)[1]
+        
         seam = np.empty(self.h, dtype=int)
-        seam[0] = np.argmin(self.E[0])
 
-        for i in range(1, self.h):
-            prev_index = seam[i - 1]
-            #set up the window for the next row minimum
-            start_win = max(0, prev_index - 1)
-            end_win = min(width, prev_index + 2)
+        self.resized_gs = np.squeeze(self.resized_gs)
 
-            seam[i] = np.argmin(self.E[i, start_win:end_win]) + start_win
+        # for pixel in range (self.w):
+        #     pixel_l = self.resized_gs[1, max(pixel - 1, 0)]
+        #     pixel_r = self.resized_gs[1, min(pixel + 1, self.w - 1)]
+        #     print(f"{top_row[pixel]} + |{pixel_r} - {pixel_l}| = {abs(pixel_r - pixel_l)}")
+        #     top_row[pixel] += abs(pixel_r - pixel_l)
+
+        left_pixels = np.pad(self.resized_gs[0, :-1], (1,0), mode='edge')
+        right_pixels = np.pad(self.resized_gs[0, 1:], (0,1), mode='edge')
+        top_row = self.E[0] + np.abs(right_pixels - left_pixels)
+
+        seam[0] = np.argmin(top_row)
+
+
+        for row in range(1, self.h):
+            prev_index = seam[row - 1]
+            window = range(max(0, prev_index - 1), min(self.w, prev_index + 2))
+
+            candidate_cost = float('inf')
+            candidate = -1
+
+            for pixel in window:
+                pixel_l = self.resized_gs[row, pixel - 1] if pixel > 0 else self.resized_gs[row, 0]
+                pixel_r = self.resized_gs[row, pixel + 1] if pixel < self.w - 1 else self.resized_gs[row, self.w - 1]
+                pixel_up = self.resized_gs[row-1, pixel]
+
+                cost = self.E[row, pixel] + abs(pixel_r - pixel_l)
+
+                if (pixel == prev_index - 1): #Going ↙
+                    cost += abs(pixel_r - pixel_up)
+
+                if (pixel == prev_index + 1): #Going ↘
+                    cost += abs(pixel_l - pixel_up)
+
+                if cost < candidate_cost:
+                    candidate = pixel
+                    candidate_cost = cost
+
+
+            seam[row] = candidate
         
         return seam
 
