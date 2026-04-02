@@ -97,15 +97,17 @@ class SeamImage:
             - keep in mind that values must be in range [0,1]
             - np.gradient or other off-the-shelf tools are NOT allowed, however feel free to compare yourself to them
         """
+        self.resized_gs = np.squeeze(self.resized_gs)
+        
         #Using offset indices for forward differencing and padding back to the original shape
         dx = self.resized_gs[:, :-1] - self.resized_gs[:, 1:]
-        dx = np.pad(dx, ((0,0), (0,1), (0,0)), mode='constant')
+        dx = np.pad(dx, ((0,0), (0,1)), mode='constant')
         
         dy = self.resized_gs[:-1, :] - self.resized_gs[1:, :]
-        dy = np.pad(dy, ((0,1), (0,0), (0,0)), mode='constant')
+        dy = np.pad(dy, ((0,1), (0,0)), mode='constant')
 
         #Computing magnitude and dividing by the maximal value of sqrt(1^2+1^2) to get range [0,1]
-        return np.squeeze(np.sqrt(dx**2 + dy**2)/np.sqrt(2), axis=2)
+        return np.sqrt(dx**2 + dy**2)/np.sqrt(2)
 
 
     def update_ref_mat(self):
@@ -309,9 +311,10 @@ class GreedySeamImage(SeamImage):
 
         seam[0] = np.argmin(top_row)
 
-        #For each row, considering energy + forward cost looking + handle edges
+        #For each row, considering energy + forward cost looking
         for row in range(1, self.h):
             prev_index = seam[row - 1]
+            # Set up boundaries for pixel candidates, handle edges
             window = range(max(0, prev_index - 1), min(self.w, prev_index + 2))
 
             candidate_cost = float('inf')
@@ -365,7 +368,28 @@ class DPSeamImage(SeamImage):
             As taught, the energy is calculated from top to bottom.
             You might find the function 'np.roll' useful.
         """
-        raise NotImplementedError("TODO: Implement DPSeamImage.calc_M")
+        M = self.E.copy()
+
+        self.resized_gs = np.squeeze(self.resized_gs)
+
+        for row in range(1, self.h):
+            for col in range(0, self.w):
+                pixel_l = self.resized_gs[row, col - 1] if col > 0 else self.resized_gs[row, 0]
+                pixel_r = self.resized_gs[row, col + 1] if col < self.w - 1 else self.resized_gs[row, self.w - 1]
+                pixel_up = self.resized_gs[row - 1, col]
+
+                cost_v = abs(pixel_r - pixel_l)
+                cost_l = cost_v + abs(pixel_up - pixel_l)
+                cost_r = cost_v + abs(pixel_up - pixel_r)
+
+                # avoid choosing m_x if out of index to avoid rolling over
+                m_l = M[row - 1, col - 1] if col > 0 else float('inf')
+                m_v = M[row - 1, col]
+                m_r = M[row - 1, col + 1] if col < self.w - 1 else float('inf')
+
+                M[row, col] += min((m_l + cost_l), (m_v + cost_v), (m_r + cost_r))
+
+        return M
 
     def init_mats(self):
         self.M = self.calc_M()
@@ -385,8 +409,34 @@ class DPSeamImage(SeamImage):
         Guidelines & hints:
             np.ndarray is a reference type. Changing it here may affect it on the outside.
         """
-        raise NotImplementedError("TODO: Implement DPSeamImage.calc_bt_mat")
         h, w = M.shape
+        for row in range(h - 1, 0, -1):
+            for col in range(w):
+
+                pixel_l = GS[row, col - 1] if col > 0 else GS[row, 0]
+                pixel_r = GS[row, col + 1] if col < w - 1 else GS[row, w - 1]
+                pixel_up = GS[row - 1, col]
+
+                cost_v = abs(pixel_r - pixel_l)
+                cost_l = cost_v + abs(pixel_up - pixel_l)
+                cost_r = cost_v + abs(pixel_up - pixel_r)
+
+                # avoid choosing m_x if out of index to avoid rolling over
+                m_l = cost_l + M[row - 1, col - 1] if col > 0 else float('inf')
+                m_v = cost_v + M[row - 1, col]
+                m_r = cost_r + M[row - 1, col + 1] if col < w - 1 else float('inf')
+
+                # by DP I.H. we are looking for previous minimum; we avoid float point comparison
+                if m_l <= m_v and m_l <= m_r:
+                    backtrack_mat[row, col] = col - 1
+                elif m_v <= m_r:
+                    backtrack_mat[row, col] = col
+                else:
+                    backtrack_mat[row, col] = col + 1
+
+
+        return backtrack_mat
+                        
 
 
     @NI_decor
@@ -405,7 +455,19 @@ class DPSeamImage(SeamImage):
             ii) fill in the backtrack matrix corresponding to M
             iii) seam backtracking: calculates the actual indices of the seam
         """
-        raise NotImplementedError("TODO: implement DPSeamImage.find_minimal_seam")
+        self.init_mats()
+        self.backtrack_mat = self.calc_bt_mat(self.M, self.E, self.resized_gs, self.backtrack_mat)
+
+        seam = np.empty(self.h, dtype=int)
+        minimal = np.argmin(self.M[self.h - 1])
+
+        for i in range (self.h - 1, 0, -1):
+            seam[i] = minimal
+            minimal = self.backtrack_mat[i, minimal]
+
+        seam[0] = minimal
+
+        return seam
 
 def scale_to_shape(orig_shape: np.ndarray, scale_factors: list):
     """ Converts scale into shape
