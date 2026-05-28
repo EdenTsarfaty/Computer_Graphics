@@ -13,9 +13,57 @@ def reflected(vector, axis):
     v = np.array([0,0,0])
     return v
 
+def get_color(ambient_coe, lights, objects, ray, hit, max_level, level=1):
+    obj, distance = hit
+    hit_pt = ray.get_hit_point(distance)
+
+    i_emitted = 0 # no emitted light for an object in this assignment
+    phong = 0 + i_emitted
+
+    ambient = calc_ambient(ambient_coe, obj)
+    phong += ambient
+
+    for light in lights:
+        shadow_ray = light.get_light_ray(hit_pt) # Ray from the light to the hit point
+        self_dist = light.get_distance_from_light(hit_pt)
+
+        _, occ_obj_distance = shadow_ray.nearest_intersected_object(objects)
+        # if occ_obj_distance < self_dist:
+        #     #s_j = 0 - occluded
+        #     continue
+        
+        intensity = light.get_intensity(hit_pt) #I_L
+        diffuse = calc_diffuse(obj, intensity, shadow_ray)
+        
+        specular = calc_specular(obj, intensity, ray)
+
+        phong += diffuse + specular
+
+    return phong
+
+
+def calc_ambient(ambient_coe, obj):
+    return obj.ambient * ambient_coe
+
+def calc_diffuse(obj, light_intensity, ray):
+    diffuse_coe = obj.diffuse #K_D
+    # Note that the inner product will turn out negative using a ray that goes to the intersection point
+    # and a normal that goes outward from that point.
+    # We therefore flip the shadow ray vector.
+    light_angle_coe = np.inner(obj.normal, -ray.direction)
+    return diffuse_coe * light_intensity * light_angle_coe
+
+def calc_specular(obj, light_intensity, ray):
+    specular_coe = obj.specular #K_S
+    shininess_f = obj.shininess #n
+    ref_ray = ray.get_reflected_ray(obj.normal)
+    view_angle_coe = np.inner(ray.direction, ref_ray)
+
+    return specular_coe * light_intensity * (view_angle_coe ** shininess_f)
+           
+            
+
 ## Lights
-
-
 class LightSource:
     def __init__(self, intensity):
         self.intensity = intensity
@@ -47,9 +95,9 @@ class PointLight(LightSource):
     def __init__(self, intensity, position, kc, kl, kq):
         super().__init__(intensity)
         self.position = np.array(position)
-        self.kc = kc
-        self.kl = kl
-        self.kq = kq
+        self.kc = kc #constant
+        self.kl = kl #linear
+        self.kq = kq #quadric
 
     # This function returns the ray that goes from the light source to a point
     def get_light_ray(self, intersection):
@@ -57,15 +105,16 @@ class PointLight(LightSource):
 
     # This function returns the distance from a point to the light source
     def get_distance_from_light(self,intersection):
-        #TODO
-        pass
+        return np.linalg.norm(intersection - self.position)
 
     # This function returns the light intensity at a point
     def get_intensity(self, intersection):
-        # calculate distance between light source and intersection 
+        # calculate distance between light source and intersection
+        distance = self.get_distance_from_light(intersection)
         # calculate and return the light intensity based on kc, kl, kq
-        #TODO
-        pass
+        attenuation = self.kq * distance**2 + self.kl * distance + self.kc
+
+        return(self.intensity * (1 / attenuation))
 
 
 class SpotLight(LightSource):
@@ -98,8 +147,24 @@ class Ray:
         intersections = None
         nearest_object = None
         min_distance = np.inf
-        #TODO
+        for obj in objects:
+            hit = obj.intersect(self)
+            if hit is not None:
+                distance, obj_hit = hit
+                if distance < min_distance:
+                    min_distance = distance
+                    nearest_object = obj_hit
+
         return nearest_object, min_distance
+    
+    def get_hit_point (self, t):
+        # get the distance in 't' value, for use in parametric representation
+        # returns the point reached at distance t.
+        return self.origin + t * self.direction
+    
+    def get_reflected_ray(self, normal):
+        # returns a reflected ray, at the same angle from normal, at the other side of it
+        return self.direction - 2 * np.inner(self.direction, normal) * normal
 
 
 class Object3D:
