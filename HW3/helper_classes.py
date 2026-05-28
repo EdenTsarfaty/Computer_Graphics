@@ -1,5 +1,7 @@
 import numpy as np
 
+EPSILON = 1e-6
+
 
 # This function gets a vector and returns its normalized form.
 def normalize(vector):
@@ -28,14 +30,14 @@ def get_color(ambient_coe, lights, objects, ray, hit, max_level, level=1):
         self_dist = light.get_distance_from_light(hit_pt)
 
         _, occ_obj_distance = shadow_ray.nearest_intersected_object(objects)
-        # if occ_obj_distance < self_dist:
-        #     #s_j = 0 - occluded
-        #     continue
+        if occ_obj_distance < self_dist - EPSILON:
+            #s_j = 0 - occluded
+            continue
         
         intensity = light.get_intensity(hit_pt) #I_L
         diffuse = calc_diffuse(obj, intensity, shadow_ray)
         
-        specular = calc_specular(obj, intensity, ray)
+        specular = calc_specular(obj, intensity, ray, shadow_ray)
 
         phong += diffuse + specular
 
@@ -53,10 +55,10 @@ def calc_diffuse(obj, light_intensity, ray):
     light_angle_coe = np.inner(obj.normal, -ray.direction)
     return diffuse_coe * light_intensity * light_angle_coe
 
-def calc_specular(obj, light_intensity, ray):
+def calc_specular(obj, light_intensity, ray, shadow_ray):
     specular_coe = obj.specular #K_S
     shininess_f = obj.shininess #n
-    ref_ray = ray.get_reflected_ray(obj.normal)
+    ref_ray = shadow_ray.get_reflected_ray(obj.normal)
     view_angle_coe = np.inner(ray.direction, ref_ray)
 
     return specular_coe * light_intensity * (view_angle_coe ** shininess_f)
@@ -70,25 +72,23 @@ class LightSource:
 
 
 class DirectionalLight(LightSource):
+    DIST_SCALAR = 100000 # Used to simulate a very far away light source from scene - increase if rendering seems incorrect
 
     def __init__(self, intensity, direction):
         super().__init__(intensity)
-        # TODO
+        self.direction = normalize(np.array(direction))
 
     # This function returns the ray that goes from the light source to a point
     def get_light_ray(self,intersection_point):
-        # TODO
-        return Ray()
+        return Ray(intersection_point - self.direction * DirectionalLight.DIST_SCALAR, self.direction)
 
     # This function returns the distance from a point to the light source
     def get_distance_from_light(self, intersection):
-        #TODO
-        pass
-
+        return DirectionalLight.DIST_SCALAR
+    
     # This function returns the light intensity at a point
     def get_intensity(self, intersection):
-        #TODO
-        pass
+        return self.intensity
 
 
 class PointLight(LightSource):
@@ -164,7 +164,7 @@ class Ray:
     
     def get_reflected_ray(self, normal):
         # returns a reflected ray, at the same angle from normal, at the other side of it
-        return self.direction - 2 * np.inner(self.direction, normal) * normal
+        return self.direction - 2 * np.dot(self.direction, normal) * normal
 
 
 class Object3D:
@@ -183,7 +183,7 @@ class Plane(Object3D):
 
     def intersect(self, ray: Ray):
         v = self.point - ray.origin
-        t = np.dot(v, self.normal) / (np.dot(self.normal, ray.direction) + 1e-6)
+        t = np.dot(v, self.normal) / (np.dot(self.normal, ray.direction) + EPSILON)
         if t > 0:
             return t, self
         else:
@@ -197,7 +197,7 @@ class Triangle(Object3D):
        /  \
     A /____\ B
 
-    The fornt face of the triangle is A -> B -> C.
+    The front face of the triangle is A -> B -> C.
     
     """
     def __init__(self, a, b, c):
@@ -208,12 +208,45 @@ class Triangle(Object3D):
 
     # computes normal to the trainagle surface. Pay attention to its direction!
     def compute_normal(self):
-        # TODO
-        pass
+        vec_ab = self.b - self.a
+        vec_ac = self.c - self.a
+        return normalize(np.cross(vec_ab, vec_ac))
 
     def intersect(self, ray: Ray):
-        # TODO
-        pass
+        # assert wheter the ray hits the plane containing the triangle, arbitrarily choose point a
+        v = self.a - ray.origin
+        t = np.dot(v, self.normal) / (np.dot(self.normal, ray.direction) + EPSILON)
+        if t <= 0:
+            return None
+        
+        # assert whether the ray hit point is within the triangle using Barycentric Coordinates
+        p = ray.get_hit_point(t)
+        vec_ab = self.b - self.a
+        vec_ac = self.c - self.a
+
+        # Explanation: The Barycentric Coordinates method in the recitation slides (slide 19) did not work properly:
+        # - Using a norm indeed returns the subtriangle area (or the parallelogram), but loses the sign.
+        # - The sign is crucial for points that fall outside our triangle. Since the order of the vectors change (demonstrated by the RHR rule),
+        #   the cross product has a negative result.
+        # - By flipping the sign for these alpha/beta/gamma we lose their true relative proportion.
+        # - We fix this by using the dot product, which results in the area, but retains the sign (since it can only go 0° or 180°, with the normal which translates to 1 or -1 with the cos function).
+        # - Additionally we omit division by 2, since it cancels out
+        ABC_area = np.dot(self.normal, np.cross(vec_ab, vec_ac))
+        vec_pb = self.b - p
+        vec_pc = self.c - p
+        vec_pa = self.a - p
+        
+        alpha = np.dot(self.normal, np.cross(vec_pb, vec_pc)) / ABC_area
+        beta = np.dot(self.normal, np.cross(vec_pc, vec_pa)) / ABC_area
+        gamma = 1.0 - alpha - beta
+
+        # if alpha + beta are bigger than 1 then gamma is negative, if alpha or beta are smaller than 0 they're outside the triangle
+        if alpha < -EPSILON or beta < -EPSILON or gamma < -EPSILON:
+            return None            
+        
+        return t, self
+
+        
 
 class Diamond(Object3D):
     """     
