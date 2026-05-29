@@ -1,6 +1,7 @@
 import numpy as np
 
 EPSILON = 1e-6
+OFFSET = 1e-4
 
 
 # This function gets a vector and returns its normalized form.
@@ -11,13 +12,13 @@ def normalize(vector):
 # This function gets a vector and the normal of the surface it hit
 # This function returns the vector that reflects from the surface
 def reflected(vector, axis):
-    # TODO:
-    v = np.array([0,0,0])
-    return v
+    return vector - 2 * np.dot(vector, axis) * axis
 
 def get_color(ambient_coe, lights, objects, ray, hit, max_level, level=1):
     obj, distance = hit
     hit_pt = ray.get_hit_point(distance)
+    # Offsetting the hit_pt along the normal by a small fraction to avoid issues
+    hit_pt = hit_pt + (obj.normal * OFFSET)
 
     i_emitted = 0 # no emitted light for an object in this assignment
     phong = 0 + i_emitted
@@ -30,7 +31,7 @@ def get_color(ambient_coe, lights, objects, ray, hit, max_level, level=1):
         self_dist = light.get_distance_from_light(hit_pt)
 
         _, occ_obj_distance = shadow_ray.nearest_intersected_object(objects)
-        if occ_obj_distance < self_dist - EPSILON:
+        if occ_obj_distance < self_dist - OFFSET:
             #s_j = 0 - occluded
             continue
         
@@ -40,6 +41,16 @@ def get_color(ambient_coe, lights, objects, ray, hit, max_level, level=1):
         specular = calc_specular(obj, intensity, ray, shadow_ray)
 
         phong += diffuse + specular
+
+    if level < max_level:
+        level += 1
+        reflective_ray = Ray(hit_pt, reflected(ray.direction, obj.normal))
+        reflected_obj, reflected_dist = reflective_ray.nearest_intersected_object(objects)
+        if reflected_obj is not None:
+            phong += obj.reflection * get_color(ambient_coe, lights, objects, reflective_ray, (reflected_obj, reflected_dist), max_level, level)
+
+
+
 
     return phong
 
@@ -52,14 +63,20 @@ def calc_diffuse(obj, light_intensity, ray):
     # Note that the inner product will turn out negative using a ray that goes to the intersection point
     # and a normal that goes outward from that point.
     # We therefore flip the shadow ray vector.
-    light_angle_coe = np.inner(obj.normal, -ray.direction)
+    # We also make sure that we get a non-negative color in case the light hits from behind the object
+    light_angle_coe = max(0, np.inner(obj.normal, -ray.direction))
     return diffuse_coe * light_intensity * light_angle_coe
 
 def calc_specular(obj, light_intensity, ray, shadow_ray):
     specular_coe = obj.specular #K_S
     shininess_f = obj.shininess #n
-    ref_ray = shadow_ray.get_reflected_ray(obj.normal)
-    view_angle_coe = np.inner(ray.direction, ref_ray)
+    ref_ray = reflected(shadow_ray.direction, obj.normal)
+
+    # Note that the inner product will turn out negative using a ray that goes to the intersection point
+    # and a normal that goes outward from that point.
+    # We therefore flip the shadow ray vector.
+    # We also make sure that we get a non-negative color in case the light hits from behind the object
+    view_angle_coe = max(0, np.inner(-ray.direction, ref_ray))
 
     return specular_coe * light_intensity * (view_angle_coe ** shininess_f)
            
@@ -144,7 +161,6 @@ class Ray:
     # The function is getting the collection of objects in the scene and looks for the one with minimum distance.
     # The function should return the nearest object and its distance (in two different arguments)
     def nearest_intersected_object(self, objects):
-        intersections = None
         nearest_object = None
         min_distance = np.inf
         for obj in objects:
@@ -161,10 +177,6 @@ class Ray:
         # get the distance in 't' value, for use in parametric representation
         # returns the point reached at distance t.
         return self.origin + t * self.direction
-    
-    def get_reflected_ray(self, normal):
-        # returns a reflected ray, at the same angle from normal, at the other side of it
-        return self.direction - 2 * np.dot(self.direction, normal) * normal
 
 
 class Object3D:
@@ -213,9 +225,12 @@ class Triangle(Object3D):
         return normalize(np.cross(vec_ab, vec_ac))
 
     def intersect(self, ray: Ray):
-        # assert wheter the ray hits the plane containing the triangle, arbitrarily choose point a
-        v = self.a - ray.origin
-        t = np.dot(v, self.normal) / (np.dot(self.normal, ray.direction) + EPSILON)
+        # assert wheter the ray hits the plane containing the triangle, arbitrarily choose point ad
+        triangle_plane = Plane(self.normal, self.a)
+        intersection = triangle_plane.intersect(ray)
+        if intersection is None:
+            return None
+        t, _ = triangle_plane.intersect(ray)
         if t <= 0:
             return None
         
@@ -287,16 +302,35 @@ A /&&&&&&&&&&&&&&&&&&&&\ B &&&/ C
                  [4,1,0],
                  [4,2,1],
                  [2,4,0]]
-        # TODO
+        l = [Triangle(self.v_list[i], self.v_list[j], self.v_list[k]) for i,j,k in t_idx]
         return l
 
     def apply_materials_to_triangles(self):
-        # TODO
-        pass
+        for triangle in self.triangle_list:
+            triangle.set_material(
+                self.ambient,
+                self.diffuse,
+                self.specular,
+                self.shininess,
+                self.reflection,
+            )
 
     def intersect(self, ray: Ray):
-        # TODO
-        pass
+        nearest_obj = None
+        t = np.inf
+
+        for triangle in self.triangle_list:
+            hit = triangle.intersect(ray)
+            if hit is not None:
+                dist, obj = hit
+                if dist < t:
+                    t = dist
+                    nearest_obj = obj
+
+        if nearest_obj is None:
+            return None
+        else:
+            return t, nearest_obj
 
 class Sphere(Object3D):
     def __init__(self, center, radius: float):
