@@ -1,5 +1,6 @@
 import numpy as np
 
+# Avoid float point computation issues
 EPSILON = 1e-6
 OFFSET = 1e-4
 
@@ -17,8 +18,9 @@ def reflected(vector, axis):
 def get_color(ambient_coe, lights, objects, ray, hit, max_level, level=1):
     obj, distance = hit
     hit_pt = ray.get_hit_point(distance)
+    normal = obj.get_normal(hit_pt)
     # Offsetting the hit_pt along the normal by a small fraction to avoid issues
-    hit_pt = hit_pt + (obj.normal * OFFSET)
+    hit_pt_offseted = hit_pt + (obj.get_normal(hit_pt) * OFFSET)
 
     i_emitted = 0 # no emitted light for an object in this assignment
     phong = 0 + i_emitted
@@ -36,15 +38,15 @@ def get_color(ambient_coe, lights, objects, ray, hit, max_level, level=1):
             continue
         
         intensity = light.get_intensity(hit_pt) #I_L
-        diffuse = calc_diffuse(obj, intensity, shadow_ray)
+        diffuse = calc_diffuse(obj, intensity, shadow_ray, hit_pt)
         
-        specular = calc_specular(obj, intensity, ray, shadow_ray)
+        specular = calc_specular(obj, intensity, ray, shadow_ray, hit_pt)
 
         phong += diffuse + specular
 
     if level < max_level:
         level += 1
-        reflective_ray = Ray(hit_pt, reflected(ray.direction, obj.normal))
+        reflective_ray = Ray(hit_pt_offseted, reflected(ray.direction, obj.get_normal(hit_pt)))
         reflected_obj, reflected_dist = reflective_ray.nearest_intersected_object(objects)
         if reflected_obj is not None:
             phong += obj.reflection * get_color(ambient_coe, lights, objects, reflective_ray, (reflected_obj, reflected_dist), max_level, level)
@@ -58,19 +60,19 @@ def get_color(ambient_coe, lights, objects, ray, hit, max_level, level=1):
 def calc_ambient(ambient_coe, obj):
     return obj.ambient * ambient_coe
 
-def calc_diffuse(obj, light_intensity, ray):
+def calc_diffuse(obj, light_intensity, ray, hit_pt):
     diffuse_coe = obj.diffuse #K_D
     # Note that the inner product will turn out negative using a ray that goes to the intersection point
     # and a normal that goes outward from that point.
     # We therefore flip the shadow ray vector.
     # We also make sure that we get a non-negative color in case the light hits from behind the object
-    light_angle_coe = max(0, np.inner(obj.normal, -ray.direction))
+    light_angle_coe = max(0, np.inner(obj.get_normal(hit_pt), -ray.direction))
     return diffuse_coe * light_intensity * light_angle_coe
 
-def calc_specular(obj, light_intensity, ray, shadow_ray):
+def calc_specular(obj, light_intensity, ray, shadow_ray, hit_pt):
     specular_coe = obj.specular #K_S
     shininess_f = obj.shininess #n
-    ref_ray = reflected(shadow_ray.direction, obj.normal)
+    ref_ray = reflected(shadow_ray.direction, obj.get_normal(hit_pt))
 
     # Note that the inner product will turn out negative using a ray that goes to the intersection point
     # and a normal that goes outward from that point.
@@ -196,10 +198,13 @@ class Plane(Object3D):
     def intersect(self, ray: Ray):
         v = self.point - ray.origin
         t = np.dot(v, self.normal) / (np.dot(self.normal, ray.direction) + EPSILON)
-        if t > 0:
+        if t > EPSILON:
             return t, self
         else:
             return None
+        
+    def get_normal(self, hit_pt):
+        return self.normal
 
 
 class Triangle(Object3D):
@@ -260,6 +265,9 @@ class Triangle(Object3D):
             return None            
         
         return t, self
+    
+    def get_normal(self, hit_pt):
+        return self.normal
 
         
 
@@ -338,6 +346,35 @@ class Sphere(Object3D):
         self.radius = radius
 
     def intersect(self, ray: Ray):
-        #TODO
-        pass
+        # As noted in the lecture, we get a quadratic equation of the form at^2 + 2bt + c
+        a = np.dot(ray.direction, ray.direction) #quadratic coefficient
+
+        origin_center_vec = ray.origin - self.center
+        b = 2.0 * np.dot(ray.direction, origin_center_vec) # linear coefficient
+
+        c = np.dot(origin_center_vec, origin_center_vec) - (self.radius ** 2) # constant
+
+        # Using standard quadratic equation roots formula
+        discriminant = (b ** 2.0) - (4.0 * a * c)
+        if discriminant < 0: # No solutions
+            return None
+        
+        discriminant_root = np.sqrt(discriminant)
+
+        t1 = (-b - discriminant_root) / (2.0 * a)
+        t2 = (-b + discriminant_root) / (2.0 * a)
+
+        # t1 is smaller and therefore always closer than t2 if non-negative
+        if t1 > EPSILON:
+            return t1, self
+        
+        # this will only happen if t1 is sitting behind the camera (negative t1)
+        if t2 > EPSILON:
+            return t2, self
+        
+        return None
+    
+    def get_normal (self, hit_pt):
+        return normalize(hit_pt - self.center)
+        
 
