@@ -15,7 +15,8 @@ def normalize(vector):
 def reflected(vector, axis):
     return vector - 2 * np.dot(vector, axis) * axis
 
-def get_color(ambient_coe, lights, objects, ray, hit, max_level, level=1):
+def get_color(ambient_coe: np.ndarray, lights: list, objects: list, ray: Ray,
+               hit: tuple[Object3D, float], max_level: int, level=1) -> np.ndarray:
     obj, distance = hit
     if obj is None or distance is np.inf:
         return np.array([0.0, 0.0, 0.0])
@@ -25,8 +26,8 @@ def get_color(ambient_coe, lights, objects, ray, hit, max_level, level=1):
     # Offsetting the hit_pt along the normal by a small fraction to avoid issues
     hit_pt_offseted = hit_pt + (obj.get_normal(hit_pt) * OFFSET)
 
-    i_emitted = np.array([0.0,0.0,0.0]) # no emitted light for an object in this assignment
-    phong = np.array([0.0,0.0,0.0]) + i_emitted
+    i_emitted = np.zeros(3) # no emitted light for an object in this assignment
+    phong = np.zeros(3) + i_emitted
 
     ambient = calc_ambient(ambient_coe, obj)
     phong += ambient
@@ -168,7 +169,10 @@ class SpotLight(LightSource):
         distance = self.get_distance_from_light(intersection)
         attenuation = self.kq * distance**2 + self.kl * distance + self.kc
 
-        return self.intensity * (np.dot(light_ray_vector, self.direction) / attenuation)
+        # We make sure that we get a non-negative light in case the object is behind the light
+        direction_factor = max(0.0, np.dot(light_ray_vector, self.direction))
+
+        return self.intensity * (direction_factor / attenuation)
 
 
 class Ray:
