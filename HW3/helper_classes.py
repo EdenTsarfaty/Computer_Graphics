@@ -22,8 +22,8 @@ def get_color(ambient_coe, lights, objects, ray, hit, max_level, level=1):
     # Offsetting the hit_pt along the normal by a small fraction to avoid issues
     hit_pt_offseted = hit_pt + (obj.get_normal(hit_pt) * OFFSET)
 
-    i_emitted = 0 # no emitted light for an object in this assignment
-    phong = 0 + i_emitted
+    i_emitted = np.array([0.0,0.0,0.0]) # no emitted light for an object in this assignment
+    phong = np.array([0.0,0.0,0.0]) + i_emitted
 
     ambient = calc_ambient(ambient_coe, obj)
     phong += ambient
@@ -139,20 +139,25 @@ class PointLight(LightSource):
 class SpotLight(LightSource):
     def __init__(self, intensity, position, direction, kc, kl, kq):
         super().__init__(intensity)
-        # TODO
+        self.direction = normalize(np.array(direction))
+        self.position = np.array(position)
+        self.kc = kc #constant
+        self.kl = kl #linear
+        self.kq = kq #quadric
 
     # This function returns the ray that goes from the light source to a point
     def get_light_ray(self, intersection):
-        #TODO
-        pass
+        return Ray(self.position, normalize(intersection - self.position))
 
     def get_distance_from_light(self, intersection):
-        #TODO
-        pass
+        return np.linalg.norm(intersection - self.position)
 
     def get_intensity(self, intersection):
-        #TODO
-        pass
+        light_ray_vector = self.get_light_ray(intersection).direction
+        distance = self.get_distance_from_light(intersection)
+        attenuation = self.kq * distance**2 + self.kl * distance + self.kc
+
+        return self.intensity * (np.dot(light_ray_vector, self.direction) / attenuation)
 
 
 class Ray:
