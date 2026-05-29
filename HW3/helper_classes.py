@@ -17,6 +17,9 @@ def reflected(vector, axis):
 
 def get_color(ambient_coe, lights, objects, ray, hit, max_level, level=1):
     obj, distance = hit
+    if obj is None or distance is np.inf:
+        return np.array([0.0, 0.0, 0.0])
+    
     hit_pt = ray.get_hit_point(distance)
     normal = obj.get_normal(hit_pt)
     # Offsetting the hit_pt along the normal by a small fraction to avoid issues
@@ -46,12 +49,20 @@ def get_color(ambient_coe, lights, objects, ray, hit, max_level, level=1):
 
     if level < max_level:
         level += 1
-        reflective_ray = Ray(hit_pt_offseted, reflected(ray.direction, obj.get_normal(hit_pt)))
-        reflected_obj, reflected_dist = reflective_ray.nearest_intersected_object(objects)
+        reflected_ray = Ray(hit_pt_offseted, reflected(ray.direction, obj.get_normal(hit_pt)))
+        reflected_obj, reflected_dist = reflected_ray.nearest_intersected_object(objects)
         if reflected_obj is not None:
-            phong += obj.reflection * get_color(ambient_coe, lights, objects, reflective_ray, (reflected_obj, reflected_dist), max_level, level)
+            phong += obj.reflection * get_color(ambient_coe, lights, objects, reflected_ray, (reflected_obj, reflected_dist), max_level, level)
 
+        #For scene 6
+        if hasattr(obj,"refraction"):
+            refraction_coe = obj.refraction
+            refracted_origin = hit_pt + (ray.direction * OFFSET)
 
+            refracted_ray = Ray(refracted_origin, ray.direction)
+            refracted_obj, refaccted_dist = refracted_ray.nearest_intersected_object(objects)
+            if refracted_obj is not None:
+                phong += refraction_coe * get_color(ambient_coe, lights, objects, refracted_ray, (refracted_obj, refaccted_dist), max_level, level)
 
 
     return phong
@@ -66,7 +77,7 @@ def calc_diffuse(obj, light_intensity, ray, hit_pt):
     # and a normal that goes outward from that point.
     # We therefore flip the shadow ray vector.
     # We also make sure that we get a non-negative color in case the light hits from behind the object
-    light_angle_coe = max(0, np.inner(obj.get_normal(hit_pt), -ray.direction))
+    light_angle_coe = max(0.0, np.inner(obj.get_normal(hit_pt), -ray.direction))
     return diffuse_coe * light_intensity * light_angle_coe
 
 def calc_specular(obj, light_intensity, ray, shadow_ray, hit_pt):
@@ -78,7 +89,7 @@ def calc_specular(obj, light_intensity, ray, shadow_ray, hit_pt):
     # and a normal that goes outward from that point.
     # We therefore flip the shadow ray vector.
     # We also make sure that we get a non-negative color in case the light hits from behind the object
-    view_angle_coe = max(0, np.inner(-ray.direction, ref_ray))
+    view_angle_coe = max(0.0, np.inner(-ray.direction, ref_ray))
 
     return specular_coe * light_intensity * (view_angle_coe ** shininess_f)
            
